@@ -26,7 +26,7 @@ Branch de trabalho: `komand-fix-list`. A `main` deste repositório espelha o ups
 | Webhook | Funcionando | A URL precisa de `?secret=...`; sem ele a plataforma responde 401. Eventos usados: `MESSAGE`, `CONNECTION`, `QRCODE`, `READ_RECEIPT`, `HISTORY_SYNC` |
 | Foto de perfil (`POST /user/avatar`) | Funcionando | Enviar o JID (`5534...@s.whatsapp.net`). Com o número puro e 9º dígito a chamada travava |
 | Agenda de contatos (`GET /user/contacts`) | Funcionando | Traz nome salvo, nome do perfil e nome comercial (~2.800 contatos na instância principal) |
-| **`@lid` → número** (`POST /user/lid-to-pn`) | **Nova, aguardando teste** | Rota nossa: recebe `{"lids":[...]}` e devolve os números que o mapa da whatsmeow conhece (só os mapeados). Commit desta versão |
+| **`@lid` → número** (`POST /user/lid-to-pn`) | **Funcionando** | Rota nossa: recebe `{"lids":[...]}` e devolve os números que o mapa da whatsmeow conhece (só os mapeados). Teste em 28/10: 135 de 135 `@lid` de uma instância ganharam número; com o nome da agenda e do CRM, a plataforma deixou só 1 `@lid` sem número e 32 de 154 contatos sem nome |
 | `@lid` | Resolvido na GO | O webhook traz `SenderAlt`/`RecipientAlt`; medido em 27/10: nenhum contato sem número nesta instância. A API só expõe número → LID (`/user/info`, `/user/check`), não o inverso |
 | Carrossel, Pix, localização, contato, reação, editar, apagar, presença, etiquetas | Rotas existem | Ainda não usadas nem testadas por nós |
 | Fixar, arquivar, silenciar conversa | Não funciona | O próprio upstream marca como `TODO: not working` |
@@ -77,4 +77,4 @@ git merge upstream/main     # resolver conflitos mantendo os itens 1 a 4 acima
 | 27/10/2026 | `0b5da70` | Citação com o texto; `VERSION` 0.7.2-komand2 |
 | 27/10/2026 | `40102eb` | Pedido de histórico vai para o próprio celular; `VERSION` 0.7.2-komand3 |
 | 27/10/2026 | (compose `10e4f07`) | `CONNECT_ON_STARTUP=true` |
-| 28/10/2026 | (esta versão) | Rota `POST /user/lid-to-pn`; `VERSION` 0.7.2-komand4 |
+| 28/10/2026 | `fd3b9cf` | Rota `POST /user/lid-to-pn`; `VERSION` 0.7.2-komand4 (implantada e testada) |
