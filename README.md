@@ -1,3 +1,5 @@
+> **Fork Komand (branch `komand-fix-list`):** lista, citação, pedido de histórico e reconexão automática ajustados. O que funciona e o que mudou está em [KOMAND.md](./KOMAND.md).
+
 <p align="center">
   <a href="https://evolutionfoundation.com.br">
     <img src="./public/hover-evolution.png" alt="Evolution Foundation" />
