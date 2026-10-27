@@ -99,3 +99,6 @@ require (
 	modernc.org/strutil v1.2.0 // indirect
 	modernc.org/token v1.1.0 // indirect
 )
+
+// Komand: whatsmeow com o conserto da lista (ver whatsmeow-lib/send.go)
+replace go.mau.fi/whatsmeow => ./whatsmeow-lib
