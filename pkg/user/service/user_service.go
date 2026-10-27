@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	instance_model "github.com/evolution-foundation/evolution-go/pkg/instance/model"
@@ -22,6 +23,7 @@ type UserService interface {
 	CheckUser(data *CheckUserStruct, instance *instance_model.Instance) (*CheckUserCollection, error)
 	GetAvatar(data *GetAvatarStruct, instance *instance_model.Instance) (*types.ProfilePictureInfo, error)
 	GetContacts(instance *instance_model.Instance) ([]ContactInfo, error)
+	LidToPn(data *LidToPnStruct, instance *instance_model.Instance) (map[string]string, error)
 	GetPrivacy(instance *instance_model.Instance) (types.PrivacySettings, error)
 	SetPrivacy(data *PrivacyStruct, instance *instance_model.Instance) (*types.PrivacySettings, error)
 	BlockContact(data *BlockStruct, instance *instance_model.Instance) (*types.Blocklist, error)
@@ -70,6 +72,12 @@ type User struct {
 
 type CheckUserCollection struct {
 	Users []User
+}
+
+// LidToPnStruct é o corpo de POST /user/lid-to-pn (Komand).
+type LidToPnStruct struct {
+	// Lids: JIDs "...@lid" (com ou sem o sufixo).
+	Lids []string `json:"lids"`
 }
 
 type CheckUserStruct struct {
@@ -550,4 +558,39 @@ func NewUserService(
 		whatsmeowService: whatsmeowService,
 		loggerWrapper:    loggerWrapper,
 	}
+}
+
+// LidToPn devolve, para cada @lid pedido, o número (JID @s.whatsapp.net) que o
+// mapa da whatsmeow conhece. Só traz os que têm mapeamento; os outros ficam de
+// fora. A API original só expõe o caminho inverso (número -> LID).
+// Komand: evita conversas "só @lid" sem número na plataforma.
+func (u *userService) LidToPn(data *LidToPnStruct, instance *instance_model.Instance) (map[string]string, error) {
+	client, err := u.ensureClientConnected(instance.Id)
+	if err != nil {
+		return nil, err
+	}
+	if client.Store == nil || client.Store.LIDs == nil {
+		return nil, errors.New("lid store not available")
+	}
+
+	out := make(map[string]string, len(data.Lids))
+	for _, raw := range data.Lids {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			continue
+		}
+		if !strings.Contains(id, "@") {
+			id += "@lid"
+		}
+		lid, perr := types.ParseJID(id)
+		if perr != nil || lid.Server != types.HiddenUserServer {
+			continue
+		}
+		pn, gerr := client.Store.LIDs.GetPNForLID(context.Background(), lid.ToNonAD())
+		if gerr != nil || pn.IsEmpty() {
+			continue
+		}
+		out[lid.ToNonAD().String()] = pn.ToNonAD().String()
+	}
+	return out, nil
 }

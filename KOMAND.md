@@ -26,6 +26,7 @@ Branch de trabalho: `komand-fix-list`. A `main` deste repositório espelha o ups
 | Webhook | Funcionando | A URL precisa de `?secret=...`; sem ele a plataforma responde 401. Eventos usados: `MESSAGE`, `CONNECTION`, `QRCODE`, `READ_RECEIPT`, `HISTORY_SYNC` |
 | Foto de perfil (`POST /user/avatar`) | Funcionando | Enviar o JID (`5534...@s.whatsapp.net`). Com o número puro e 9º dígito a chamada travava |
 | Agenda de contatos (`GET /user/contacts`) | Funcionando | Traz nome salvo, nome do perfil e nome comercial (~2.800 contatos na instância principal) |
+| **`@lid` → número** (`POST /user/lid-to-pn`) | **Nova, aguardando teste** | Rota nossa: recebe `{"lids":[...]}` e devolve os números que o mapa da whatsmeow conhece (só os mapeados). Commit desta versão |
 | `@lid` | Resolvido na GO | O webhook traz `SenderAlt`/`RecipientAlt`; medido em 27/10: nenhum contato sem número nesta instância. A API só expõe número → LID (`/user/info`, `/user/check`), não o inverso |
 | Carrossel, Pix, localização, contato, reação, editar, apagar, presença, etiquetas | Rotas existem | Ainda não usadas nem testadas por nós |
 | Fixar, arquivar, silenciar conversa | Não funciona | O próprio upstream marca como `TODO: not working` |
@@ -39,8 +40,9 @@ Branch de trabalho: `komand-fix-list`. A `main` deste repositório espelha o ups
 2. **`pkg/sendMessage/service/send_service.go`**
    - `SendList` manda a `ListMessage` sem o embrulho `DocumentWithCaptionMessage` e sem `<bot>`. Com o formato antigo a API devolvia 200, mas a lista não aparecia (issues #59, #170, #204 do upstream).
    - `QuotedStruct` ganha `text` e `fromMe`; a citação usa o texto e preenche o autor (nosso JID se `fromMe`, senão o do destinatário). Antes a citação chegava vazia (commit `0b5da70`).
-3. **`pkg/chat/service/chat_service.go`** (commit `40102eb`): `HistorySyncRequest` usa `SendPeerMessage` (pedido para o próprio celular), não para o chat do contato (upstream #150).
-4. **`Dockerfile`** copia `whatsmeow-lib` antes do `go mod download`; **`go.mod`** tem `replace go.mau.fi/whatsmeow => ./whatsmeow-lib`.
+3. **`pkg/user/`** (`service`, `handler`) e **`pkg/routes/routes.go`**: rota nova `POST /user/lid-to-pn` (`{"lids": ["123@lid", ...]}` até 500 → `{"data": {"123@lid": "5534...@s.whatsapp.net"}}`). Usa `Store.LIDs.GetPNForLID`; só devolve os mapeados.
+4. **`pkg/chat/service/chat_service.go`** (commit `40102eb`): `HistorySyncRequest` usa `SendPeerMessage` (pedido para o próprio celular), não para o chat do contato (upstream #150).
+5. **`Dockerfile`** copia `whatsmeow-lib` antes do `go mod download`; **`go.mod`** tem `replace go.mau.fi/whatsmeow => ./whatsmeow-lib`.
 
 ## Implantação
 
@@ -54,7 +56,7 @@ Branch de trabalho: `komand-fix-list`. A `main` deste repositório espelha o ups
 git remote add upstream https://github.com/evolution-foundation/evolution-go.git
 git fetch upstream
 git checkout komand-fix-list
-git merge upstream/main     # resolver conflitos mantendo os 4 itens acima
+git merge upstream/main     # resolver conflitos mantendo os itens 1 a 4 acima
 ```
 
 - Se o upstream trocar a versão da whatsmeow no `go.mod`, baixe essa versão para `whatsmeow-lib/` e reaplique o item 1 (funções `getButtonTypeFromMessage`, `getButtonAttributes`, `hasBizNode` e o bloco que monta o `<biz>`).
@@ -75,3 +77,4 @@ git merge upstream/main     # resolver conflitos mantendo os 4 itens acima
 | 27/10/2026 | `0b5da70` | Citação com o texto; `VERSION` 0.7.2-komand2 |
 | 27/10/2026 | `40102eb` | Pedido de histórico vai para o próprio celular; `VERSION` 0.7.2-komand3 |
 | 27/10/2026 | (compose `10e4f07`) | `CONNECT_ON_STARTUP=true` |
+| 28/10/2026 | (esta versão) | Rota `POST /user/lid-to-pn`; `VERSION` 0.7.2-komand4 |

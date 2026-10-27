@@ -13,6 +13,7 @@ type UserHandler interface {
 	CheckUser(ctx *gin.Context)
 	GetAvatar(ctx *gin.Context)
 	GetContacts(ctx *gin.Context)
+	LidToPn(ctx *gin.Context)
 	GetPrivacy(ctx *gin.Context)
 	SetPrivacy(ctx *gin.Context)
 	BlockContact(ctx *gin.Context)
@@ -548,4 +549,47 @@ func NewUserHandler(
 	return &userHandler{
 		userService: userService,
 	}
+}
+
+// Get the phone numbers the library knows for a list of @lid IDs
+// @Summary Map @lid to phone number
+// @Description Returns the phone number (JID) the WhatsApp LID map holds for each requested @lid. Only mapped ones are returned. Komand addition.
+// @Tags User
+// @Accept json
+// @Produce json
+// @Param message body user_service.LidToPnStruct true "LIDs"
+// @Success 200 {object} gin.H "success"
+// @Failure 400 {object} gin.H "Bad request"
+// @Failure 500 {object} gin.H "Internal server error"
+// @Router /user/lid-to-pn [post]
+func (u *userHandler) LidToPn(ctx *gin.Context) {
+	getInstance := ctx.MustGet("instance")
+
+	instance, ok := getInstance.(*instance_model.Instance)
+	if !ok {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "instance not found"})
+		return
+	}
+
+	var data *user_service.LidToPnStruct
+	if err := ctx.ShouldBindBodyWithJSON(&data); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if data == nil || len(data.Lids) < 1 {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "lids is required"})
+		return
+	}
+	if len(data.Lids) > 500 {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "max 500 lids per request"})
+		return
+	}
+
+	pairs, err := u.userService.LidToPn(data, instance)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"message": "success", "data": pairs})
 }
