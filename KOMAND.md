@@ -18,7 +18,7 @@ Branch de trabalho: `komand-fix-list`. A `main` deste repositório espelha o ups
 |---|---|---|
 | Texto, imagem, vídeo, áudio, documento | Em uso | Operação diária da plataforma |
 | **Lista** (`POST /send/list`) | **Funcionando** | Aparece no celular e no WhatsApp Web; o toque volta pelo webhook (`selectedRowID`). Corrigido no commit `8b441ef` |
-| **Botões de resposta** (`POST /send/button`, até 3) | Corrigido, **aguardando deploy e teste real** | Em 28/10 o WhatsApp recusava o `ButtonsMessage` com `server returned error 405` (upstream #170). Agora sai como `InteractiveMessage` native_flow `quick_reply` com o `<biz>` completo; o toque deve voltar como `InteractiveResponseMessage` (`paramsJSON` com o `id`) |
+| **Botões de resposta** (`POST /send/button`, até 3) | **Funcionando** (implantado e testado em 28/10: aparecem, o toque volta citando a pergunta) | Em 28/10 o WhatsApp recusava o `ButtonsMessage` com `server returned error 405` (upstream #170). Agora sai como `InteractiveMessage` native_flow `quick_reply` com o `<biz>` completo; o toque deve voltar como `InteractiveResponseMessage` (`paramsJSON` com o `id`) |
 | **Citação com texto** (`quoted.messageId` + `text` + `fromMe`) | **Funcionando** | Resposta citando enviada pela plataforma; o cliente vê a citação com o texto. Commit `0b5da70` |
 | Enquete (`POST /send/poll`) | Envio funciona | A enquete aparece. A leitura do voto é um bug conhecido do upstream (`Failed to decrypt vote`, issue #219): **não resolvido** |
 | **Reconexão automática ao reiniciar** | **Funcionando** | `CONNECT_ON_STARTUP=true` no compose. Depois do deploy a instância voltou conectada sozinha; sem a opção, ficava desligada até alguém pedir a conexão |
@@ -79,4 +79,4 @@ git merge upstream/main     # resolver conflitos mantendo os itens 1 a 4 acima
 | 27/10/2026 | `40102eb` | Pedido de histórico vai para o próprio celular; `VERSION` 0.7.2-komand3 |
 | 27/10/2026 | (compose `10e4f07`) | `CONNECT_ON_STARTUP=true` |
 | 28/10/2026 | `fd3b9cf` | Rota `POST /user/lid-to-pn`; `VERSION` 0.7.2-komand4 (implantada e testada) |
-| 28/10/2026 | (este commit) | Botões de resposta como `InteractiveMessage` + `<biz>` completo; `VERSION` 0.7.2-komand5 |
+| 28/10/2026 | `51f30be` | Botões de resposta como `InteractiveMessage` + `<biz>` completo; `VERSION` 0.7.2-komand5 (implantada e testada) |
