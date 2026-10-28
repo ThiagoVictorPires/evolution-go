@@ -18,7 +18,7 @@ Branch de trabalho: `komand-fix-list`. A `main` deste repositório espelha o ups
 |---|---|---|
 | Texto, imagem, vídeo, áudio, documento | Em uso | Operação diária da plataforma |
 | **Lista** (`POST /send/list`) | **Funcionando** | Aparece no celular e no WhatsApp Web; o toque volta pelo webhook (`selectedRowID`). Corrigido no commit `8b441ef` |
-| **Botões de resposta** (`POST /send/button`, até 3) | **Funcionando** (aparecem no celular e no WhatsApp Web) | Envio real. O toque volta como `selectedButtonID`; a leitura está coberta por teste unitário, sem teste de toque real ainda |
+| **Botões de resposta** (`POST /send/button`, até 3) | Corrigido, **aguardando deploy e teste real** | Em 28/10 o WhatsApp recusava o `ButtonsMessage` com `server returned error 405` (upstream #170). Agora sai como `InteractiveMessage` native_flow `quick_reply` com o `<biz>` completo; o toque deve voltar como `InteractiveResponseMessage` (`paramsJSON` com o `id`) |
 | **Citação com texto** (`quoted.messageId` + `text` + `fromMe`) | **Funcionando** | Resposta citando enviada pela plataforma; o cliente vê a citação com o texto. Commit `0b5da70` |
 | Enquete (`POST /send/poll`) | Envio funciona | A enquete aparece. A leitura do voto é um bug conhecido do upstream (`Failed to decrypt vote`, issue #219): **não resolvido** |
 | **Reconexão automática ao reiniciar** | **Funcionando** | `CONNECT_ON_STARTUP=true` no compose. Depois do deploy a instância voltou conectada sozinha; sem a opção, ficava desligada até alguém pedir a conexão |
@@ -39,6 +39,7 @@ Branch de trabalho: `komand-fix-list`. A `main` deste repositório espelha o ups
    - `hasBizNode`: se quem chama já mandou o próprio `<biz>` (os botões da GO), a biblioteca não põe outro.
 2. **`pkg/sendMessage/service/send_service.go`**
    - `SendList` manda a `ListMessage` sem o embrulho `DocumentWithCaptionMessage` e sem `<bot>`. Com o formato antigo a API devolvia 200, mas a lista não aparecia (issues #59, #170, #204 do upstream).
+   - `SendButton` (só botões de resposta): `InteractiveMessage` native_flow `quick_reply` no topo, sem `DocumentWithCaptionMessage`, sem `<bot>` e sem cabeçalho de mídia, com o `<biz actual_actors host_storage privacy_mode_ts>` + `<interactive native_flow v=1><native_flow v=9 name=mixed/>` + `<quality_control>` (função `komandReplyBizNode`, formato da tulir/whatsmeow#1235 e do fork itsliaaa/baileys). Pix e botões de link/copiar/ligar ficaram como estavam.
    - `QuotedStruct` ganha `text` e `fromMe`; a citação usa o texto e preenche o autor (nosso JID se `fromMe`, senão o do destinatário). Antes a citação chegava vazia (commit `0b5da70`).
 3. **`pkg/user/`** (`service`, `handler`) e **`pkg/routes/routes.go`**: rota nova `POST /user/lid-to-pn` (`{"lids": ["123@lid", ...]}` até 500 → `{"data": {"123@lid": "5534...@s.whatsapp.net"}}`). Usa `Store.LIDs.GetPNForLID`; só devolve os mapeados.
 4. **`pkg/chat/service/chat_service.go`** (commit `40102eb`): `HistorySyncRequest` usa `SendPeerMessage` (pedido para o próprio celular), não para o chat do contato (upstream #150).
@@ -78,3 +79,4 @@ git merge upstream/main     # resolver conflitos mantendo os itens 1 a 4 acima
 | 27/10/2026 | `40102eb` | Pedido de histórico vai para o próprio celular; `VERSION` 0.7.2-komand3 |
 | 27/10/2026 | (compose `10e4f07`) | `CONNECT_ON_STARTUP=true` |
 | 28/10/2026 | `fd3b9cf` | Rota `POST /user/lid-to-pn`; `VERSION` 0.7.2-komand4 (implantada e testada) |
+| 28/10/2026 | (este commit) | Botões de resposta como `InteractiveMessage` + `<biz>` completo; `VERSION` 0.7.2-komand5 |

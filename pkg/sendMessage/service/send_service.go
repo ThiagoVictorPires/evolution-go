@@ -5,6 +5,7 @@ import (
 	"context"
 	crypto_rand "crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1740,8 +1741,7 @@ func mapKeyType(keyType string) string {
 }
 
 func (s *sendService) SendButton(data *ButtonStruct, instance *instance_model.Instance) (*MessageSendStruct, error) {
-	client, err := s.ensureClientConnected(instance.Id)
-	if err != nil {
+	if _, err := s.ensureClientConnected(instance.Id); err != nil {
 		return nil, err
 	}
 
@@ -1862,81 +1862,40 @@ func (s *sendService) SendButton(data *ButtonStruct, instance *instance_model.In
 	var msgType string
 
 	if hasReply && !hasOtherTypes && !hasPix {
-		// Reply-only: native ButtonsMessage wrapped in DocumentWithCaptionMessage (Baileys PR #36).
-		var replyButtons []*waE2E.ButtonsMessage_Button
-		for _, v := range data.Buttons {
-			replyButtons = append(replyButtons, &waE2E.ButtonsMessage_Button{
-				ButtonID: proto.String(v.Id),
-				ButtonText: &waE2E.ButtonsMessage_Button_ButtonText{
-					DisplayText: proto.String(v.DisplayText),
+		// Komand: botões de resposta saem como InteractiveMessage (native_flow
+		// quick_reply) no topo da mensagem, como o carrossel. O ButtonsMessage
+		// antigo é recusado pelo WhatsApp com erro 405 (upstream #170); com o
+		// <biz> completo (abaixo) a mensagem aparece e o toque volta como
+		// InteractiveResponseMessage (tulir/whatsmeow#1235). Sem cabeçalho de mídia.
+		body := data.Description
+		if data.Title != "" && data.Title != data.Description {
+			if body != "" {
+				body = "*" + data.Title + "*\n\n" + body
+			} else {
+				body = data.Title
+			}
+		}
+		interactive := &waE2E.InteractiveMessage{
+			Body: &waE2E.InteractiveMessage_Body{Text: proto.String(body)},
+			InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
+				NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
+					Buttons:           buttons,
+					MessageParamsJSON: &messageParamsJSON,
+					MessageVersion:    proto.Int32(1),
 				},
-				Type: waE2E.ButtonsMessage_Button_RESPONSE.Enum(),
-			})
+			},
 		}
-
-		buttonsMsg := &waE2E.ButtonsMessage{
-			ContentText: proto.String(data.Description),
-			FooterText:  proto.String(data.Footer),
-			HeaderType:  waE2E.ButtonsMessage_EMPTY.Enum(),
-			Buttons:     replyButtons,
+		if data.Footer != "" {
+			interactive.Footer = &waE2E.InteractiveMessage_Footer{Text: proto.String(data.Footer)}
 		}
-
-		// Optional media header (image or video URL).
-		if data.ImageUrl != "" {
-			if resp, err := http.Get(data.ImageUrl); err == nil {
-				fileData, readErr := io.ReadAll(resp.Body)
-				resp.Body.Close()
-				if readErr == nil {
-					if uploaded, upErr := client.Upload(context.Background(), fileData, whatsmeow.MediaImage); upErr == nil {
-						buttonsMsg.HeaderType = waE2E.ButtonsMessage_IMAGE.Enum()
-						buttonsMsg.Header = &waE2E.ButtonsMessage_ImageMessage{
-							ImageMessage: &waE2E.ImageMessage{
-								URL:           proto.String(uploaded.URL),
-								DirectPath:    proto.String(uploaded.DirectPath),
-								MediaKey:      uploaded.MediaKey,
-								Mimetype:      proto.String("image/jpeg"),
-								FileEncSHA256: uploaded.FileEncSHA256,
-								FileSHA256:    uploaded.FileSHA256,
-								FileLength:    proto.Uint64(uint64(len(fileData))),
-							},
-						}
-					}
-				}
-			}
-		} else if data.VideoUrl != "" {
-			if resp, err := http.Get(data.VideoUrl); err == nil {
-				fileData, readErr := io.ReadAll(resp.Body)
-				resp.Body.Close()
-				if readErr == nil {
-					if uploaded, upErr := client.Upload(context.Background(), fileData, whatsmeow.MediaVideo); upErr == nil {
-						buttonsMsg.HeaderType = waE2E.ButtonsMessage_VIDEO.Enum()
-						buttonsMsg.Header = &waE2E.ButtonsMessage_VideoMessage{
-							VideoMessage: &waE2E.VideoMessage{
-								URL:           proto.String(uploaded.URL),
-								DirectPath:    proto.String(uploaded.DirectPath),
-								MediaKey:      uploaded.MediaKey,
-								Mimetype:      proto.String("video/mp4"),
-								FileEncSHA256: uploaded.FileEncSHA256,
-								FileSHA256:    uploaded.FileSHA256,
-								FileLength:    proto.Uint64(uint64(len(fileData))),
-							},
-						}
-					}
-				}
-			}
-		}
-
 		msg = &waE2E.Message{
-			DocumentWithCaptionMessage: &waE2E.FutureProofMessage{
-				Message: &waE2E.Message{
-					ButtonsMessage: buttonsMsg,
-				},
-			},
+			InteractiveMessage: interactive,
 			MessageContextInfo: &waE2E.MessageContextInfo{
-				MessageSecret: btnMsgSecret,
+				MessageSecret:      btnMsgSecret,
+				DeviceListMetadata: &waE2E.DeviceListMetadata{},
 			},
 		}
-		msgType = "ButtonsMessage"
+		msgType = "InteractiveMessage"
 	} else if hasPix {
 		// Pix: NativeFlowMessage wrapped in DocumentWithCaptionMessage.
 		paymentMsgParams := `{"native_flow_name":"order_details","version":1}`
@@ -2009,19 +1968,8 @@ func (s *sendService) SendButton(data *ButtonStruct, instance *instance_model.In
 	// The <bot biz_bot="1"/> node is required for 1:1 chats (skipped on groups).
 	var bizInteractiveContent waBinary.Node
 	if hasReply && !hasOtherTypes && !hasPix {
-		bizInteractiveContent = waBinary.Node{
-			Tag: "interactive",
-			Attrs: waBinary.Attrs{
-				"type": "native_flow",
-				"v":    "1",
-			},
-			Content: []waBinary.Node{{
-				Tag: "native_flow",
-				Attrs: waBinary.Attrs{
-					"name": "quick_reply",
-				},
-			}},
-		}
+		// Komand: formato do cliente oficial (ver komandReplyBizNode).
+		bizInteractiveContent = waBinary.Node{}
 	} else if hasPix {
 		bizInteractiveContent = waBinary.Node{
 			Tag: "interactive",
@@ -2059,7 +2007,10 @@ func (s *sendService) SendButton(data *ButtonStruct, instance *instance_model.In
 			Content: []waBinary.Node{bizInteractiveContent},
 		},
 	}
-	if !strings.Contains(data.Number, "@g.us") {
+	if hasReply && !hasOtherTypes && !hasPix {
+		// Sem <bot>: no cliente oficial ele só vai na etiqueta de IA.
+		bizNodes = []waBinary.Node{komandReplyBizNode()}
+	} else if !strings.Contains(data.Number, "@g.us") {
 		bizNodes = append(bizNodes, waBinary.Node{
 			Tag:   "bot",
 			Attrs: waBinary.Attrs{"biz_bot": "1"},
@@ -2082,6 +2033,41 @@ func (s *sendService) SendButton(data *ButtonStruct, instance *instance_model.In
 	}
 
 	return message, nil
+}
+
+// komandReplyBizNode: <biz> que o WhatsApp aceita para botões native_flow
+// vindos de aparelho vinculado. Sem os atributos e o <quality_control> o
+// servidor devolve 405/479 ou aceita e ninguém vê (tulir/whatsmeow#1235,
+// mesmo formato do fork itsliaaa/baileys).
+func komandReplyBizNode() waBinary.Node {
+	decisionID := make([]byte, 20)
+	_, _ = crypto_rand.Read(decisionID)
+	return waBinary.Node{
+		Tag: "biz",
+		Attrs: waBinary.Attrs{
+			"actual_actors":   "2",
+			"host_storage":    "2",
+			"privacy_mode_ts": strconv.FormatInt(time.Now().Unix(), 10),
+		},
+		Content: []waBinary.Node{
+			{
+				Tag:   "interactive",
+				Attrs: waBinary.Attrs{"type": "native_flow", "v": "1"},
+				Content: []waBinary.Node{{
+					Tag:   "native_flow",
+					Attrs: waBinary.Attrs{"v": "9", "name": "mixed"},
+				}},
+			},
+			{
+				Tag:   "quality_control",
+				Attrs: waBinary.Attrs{"decision_id": hex.EncodeToString(decisionID), "source_type": "third_party"},
+				Content: []waBinary.Node{{
+					Tag:   "decision_source",
+					Attrs: waBinary.Attrs{"value": "df"},
+				}},
+			},
+		},
+	}
 }
 
 func stringPointer(s string) *string {
