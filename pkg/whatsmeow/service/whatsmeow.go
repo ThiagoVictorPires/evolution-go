@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/image/webp"
@@ -29,7 +30,6 @@ import (
 	"go.mau.fi/whatsmeow/proto/waCompanionReg"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/store"
-	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
@@ -97,6 +97,9 @@ type whatsmeowService struct {
 	natsProducer       producer_interfaces.Producer
 	loggerWrapper      *logger_wrapper.LoggerManager
 	passkeyCeremony    *ceremony.Store
+	// store guarda o UNICO container do whatsmeow (e o *sql.DB dele). O servico
+	// tem receivers por valor, entao precisa ser ponteiro para ser compartilhado.
+	store *sharedStore
 }
 
 type MyClient struct {
@@ -130,6 +133,11 @@ type MyClient struct {
 	loggerWrapper      *logger_wrapper.LoggerManager
 	qrcodeCount        int
 	passkeyCeremony    *ceremony.Store
+	// noAutoRestart e ligado quando uma instancia SEM device JID (nunca
+	// pareada) termina o ciclo de QR (maximo de QR ou QR esgotado). O loop de
+	// StartClient entao encerra em vez de se reiniciar sozinho; so um novo
+	// pedido de QR (GetQr -> StartInstance) sobe a instancia de novo.
+	noAutoRestart atomic.Bool
 }
 
 func (mycli *MyClient) persistMessageAsync(message message_model.Message) {
@@ -306,7 +314,6 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 	w.loggerWrapper.GetLogger(cd.Instance.Id).LogInfo("Starting websocket connection to Whatsapp for user '%s'", cd.Instance.Id)
 
 	var deviceStore *store.Device
-	var err error
 
 	if w.clientPointer[cd.Instance.Id] != nil {
 		if w.clientPointer[cd.Instance.Id].IsConnected() {
@@ -314,25 +321,10 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 		}
 	}
 
-	var container *sqlstore.Container
-
-	if w.config.WaDebug != "" {
-		dbLog := waLog.Stdout("Database", w.config.WaDebug, true)
-		if w.config.PostgresAuthDB != "" {
-			container, err = sqlstore.New(context.Background(), "postgres", w.config.PostgresAuthDB, dbLog)
-		} else {
-			dsn := fmt.Sprintf("file:%s/dbdata/main.db?_pragma=foreign_keys(1)&_busy_timeout=5000&cache=shared&mode=rwc&_journal_mode=WAL", w.exPath)
-			container, err = sqlstore.New(context.Background(), "sqlite", dsn, dbLog)
-		}
-	} else {
-		if w.config.PostgresAuthDB != "" {
-			container, err = sqlstore.New(context.Background(), "postgres", w.config.PostgresAuthDB, nil)
-		} else {
-			dsn := fmt.Sprintf("file:%s/dbdata/main.db?_pragma=foreign_keys(1)&_busy_timeout=5000&cache=shared&mode=rwc&_journal_mode=WAL", w.exPath)
-			container, err = sqlstore.New(context.Background(), "sqlite", dsn, nil)
-		}
-	}
-
+	// Um unico container/pool compartilhado por todas as instancias (ver
+	// store_container.go). Antes, cada StartClient abria um *sql.DB novo e
+	// nunca fechava: vazava um pool inteiro por (re)conexao.
+	container, err := w.getContainer()
 	if err != nil {
 		w.loggerWrapper.GetLogger(cd.Instance.Id).LogError("[%s] Failed to create container: %v", cd.Instance.Id, err)
 		return
@@ -624,7 +616,11 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 				go mycli.service.SendToGlobalQueues(postMap["event"].(string), values, mycli.userID)
 			}
 
-			// restart client
+			// restart client (exceto instancia nunca pareada que terminou o ciclo de QR)
+			if mycli.noAutoRestart.Load() {
+				w.loggerWrapper.GetLogger(cd.Instance.Id).LogWarn("[%s] Instance was never paired and its QR cycle ended: NOT restarting automatically. Request a QR code again to start it", cd.Instance.Id)
+				return
+			}
 			w.loggerWrapper.GetLogger(cd.Instance.Id).LogInfo("[%s] Restarting client", cd.Instance.Id)
 			w.StartClient(cd)
 			return
@@ -842,6 +838,11 @@ func (mycli *MyClient) teardownQR(reason string, forceLogout bool) {
 		if mycli.config.AmqpGlobalEnabled || mycli.config.NatsGlobalEnabled {
 			go mycli.service.SendToGlobalQueues("QRTimeout", values, instanceID)
 		}
+	}
+
+	// Sem device JID (nunca pareada): o ciclo de QR acabou, nao reinicie sozinha.
+	if mycli.WAClient != nil && !shouldAutoRestart(mycli.WAClient.Store.ID != nil) {
+		mycli.noAutoRestart.Store(true)
 	}
 
 	// Signal StartClient's select loop to disconnect and clean up the shared
@@ -1982,6 +1983,14 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 		}
 
 		// Trigger instance restart via websocket-capable service (non-blocking)
+		// Reconexao automatica so para instancia PAREADA (com device JID). Uma
+		// instancia nunca pareada reiniciava para sempre (Disconnected -> QR ->
+		// maximo de QR -> Disconnected ...), vazando recursos a cada volta.
+		paired := mycli.WAClient != nil && mycli.WAClient.Store.ID != nil
+		if !shouldAutoRestart(paired) || mycli.noAutoRestart.Load() {
+			mycli.loggerWrapper.GetLogger(mycli.userID).LogWarn("[%s] Disconnected, but instance has no device JID (never paired): skipping automatic restart until a QR code is requested again", mycli.userID)
+			break
+		}
 		go func(instanceID string) {
 			mycli.loggerWrapper.GetLogger(instanceID).LogInfo("[%s] Disconnected detected, restarting instance", instanceID)
 			if err := mycli.service.ReconnectClient(instanceID); err != nil {
@@ -2831,6 +2840,7 @@ func NewWhatsmeowService(
 		natsProducer:       natsProducer,
 		loggerWrapper:      loggerWrapper,
 		passkeyCeremony:    ceremony.NewStore(),
+		store:              &sharedStore{},
 	}
 }
 

@@ -44,6 +44,8 @@ Branch de trabalho: `komand-fix-list`. A `main` deste repositório espelha o ups
 3. **`pkg/user/`** (`service`, `handler`) e **`pkg/routes/routes.go`**: rota nova `POST /user/lid-to-pn` (`{"lids": ["123@lid", ...]}` até 500 → `{"data": {"123@lid": "5534...@s.whatsapp.net"}}`). Usa `Store.LIDs.GetPNForLID`; só devolve os mapeados.
 4. **`pkg/chat/service/chat_service.go`** (commit `40102eb`): `HistorySyncRequest` usa `SendPeerMessage` (pedido para o próprio celular), não para o chat do contato (upstream #150).
 5. **`Dockerfile`** copia `whatsmeow-lib` antes do `go mod download`; **`go.mod`** tem `replace go.mau.fi/whatsmeow => ./whatsmeow-lib`.
+6. **Vazamento de conexões do Postgres** (`pkg/whatsmeow/service/store_container.go`, `whatsmeow.go`): `StartClient` chamava `sqlstore.New` a cada (re)conexão e nunca fechava o `*sql.DB`, então cada volta de reconexão vazava um pool inteiro até o Postgres da GO recusar com `too many clients already` (incidente de 28-29/10/2026: uma instância órfã reiniciando a cada ~30 s derrubou o banco e uma instância de produção ficou 15 h parada). Agora existe UM container compartilhado, criado na primeira vez, com pool limitado (20 abertas, 5 ociosas, ociosa fecha em 1 min). Em falha de criação o pool é fechado e o erro não é memorizado (a próxima tentativa refaz). Upstream tem PRs abertos parecidos (#194, #206, #200, #178), nenhum mergeado; issues #106, #109, #112, #118, #165, #175, #215.
+7. **Instância nunca pareada não reinicia sozinha** (`whatsmeow.go`): sem device JID, o evento `Disconnected` não chama mais `ReconnectClient`, e quando o ciclo de QR termina (máximo de QR ou QR esgotado) o loop de `StartClient` encerra em vez de se reiniciar. Só um novo pedido de QR sobe a instância de novo. Instâncias pareadas continuam reconectando sozinhas.
 
 ## Implantação
 
@@ -80,3 +82,4 @@ git merge upstream/main     # resolver conflitos mantendo os itens 1 a 4 acima
 | 27/10/2026 | (compose `10e4f07`) | `CONNECT_ON_STARTUP=true` |
 | 28/10/2026 | `fd3b9cf` | Rota `POST /user/lid-to-pn`; `VERSION` 0.7.2-komand4 (implantada e testada) |
 | 28/10/2026 | `51f30be` | Botões de resposta como `InteractiveMessage` + `<biz>` completo; `VERSION` 0.7.2-komand5 (implantada e testada) |
+| 29/10/2026 | (este PR) | Um container/pool compartilhado do whatsmeow (fim do vazamento de conexões); instância nunca pareada não reinicia sozinha; `VERSION` 0.7.2-komand6 (build e testes só no Easypanel) |
