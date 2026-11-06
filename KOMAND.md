@@ -22,6 +22,7 @@ Branch de trabalho: `komand-fix-list`. A `main` deste repositório espelha o ups
 | **Citação com texto** (`quoted.messageId` + `text` + `fromMe`) | **Funcionando** | Resposta citando enviada pela plataforma; o cliente vê a citação com o texto. Commit `0b5da70` |
 | Enquete (`POST /send/poll`) | Envio funciona | A enquete aparece. A leitura do voto é um bug conhecido do upstream (`Failed to decrypt vote`, issue #219): **não resolvido** |
 | **Reconexão automática ao reiniciar** | **Funcionando** | `CONNECT_ON_STARTUP=true` no compose. Depois do deploy a instância voltou conectada sozinha; sem a opção, ficava desligada até alguém pedir a conexão |
+| **ACK de `<status>`** | **Correção preparada, aguardando build e teste real** | Backport de `tulir/whatsmeow@a238105488` para evitar `<stream:error><ack class="status" .../>` a cada ~50 min e mensagens presas antes do webhook. Incidente Old Barber em 06/11; validar com mensagem recebida e conexão estável por mais de 50 min. |
 | Pedido de histórico (`POST /chat/history-sync`, "Carregar mensagens anteriores") | Corrigido e implantado, **aguardando teste** | Commit `40102eb`. O teste anterior falhou com `no signal session established`; ainda não repetido |
 | Webhook | Funcionando | A URL precisa de `?secret=...`; sem ele a plataforma responde 401. Eventos usados: `MESSAGE`, `CONNECTION`, `QRCODE`, `READ_RECEIPT`, `HISTORY_SYNC` |
 | Foto de perfil (`POST /user/avatar`) | Funcionando | Enviar o JID (`5534...@s.whatsapp.net`). Com o número puro e 9º dígito a chamada travava |
@@ -46,6 +47,7 @@ Branch de trabalho: `komand-fix-list`. A `main` deste repositório espelha o ups
 5. **`Dockerfile`** copia `whatsmeow-lib` antes do `go mod download`; **`go.mod`** tem `replace go.mau.fi/whatsmeow => ./whatsmeow-lib`.
 6. **Vazamento de conexões do Postgres** (`pkg/whatsmeow/service/store_container.go`, `whatsmeow.go`): `StartClient` chamava `sqlstore.New` a cada (re)conexão e nunca fechava o `*sql.DB`, então cada volta de reconexão vazava um pool inteiro até o Postgres da GO recusar com `too many clients already` (incidente de 28-29/10/2026: uma instância órfã reiniciando a cada ~30 s derrubou o banco e uma instância de produção ficou 15 h parada). Agora existe UM container compartilhado, criado na primeira vez, com pool limitado (20 abertas, 5 ociosas, ociosa fecha em 1 min). Em falha de criação o pool é fechado e o erro não é memorizado (a próxima tentativa refaz). Upstream tem PRs abertos parecidos (#194, #206, #200, #178), nenhum mergeado; issues #106, #109, #112, #118, #165, #175, #215.
 7. **Instância nunca pareada não reinicia sozinha** (`whatsmeow.go`): sem device JID, o evento `Disconnected` não chama mais `ReconnectClient`, e quando o ciclo de QR termina (máximo de QR ou QR esgotado) o loop de `StartClient` encerra em vez de se reiniciar. Só um novo pedido de QR sobe a instância de novo. Instâncias pareadas continuam reconectando sozinhas.
+8. **ACK de status no whatsmeow local** (`whatsmeow-lib/client.go`, `message.go`, `types/message.go`): backport do commit upstream `a238105488` (20/07/2026). A biblioteca antiga não registrava o nó `<status>`; o servidor cobrava o ACK depois de ~50 min e fechava o stream, enquanto mensagens de cliente podiam ficar presas antes de chegar ao webhook. O handler reconhece o nó e confirma status comum; status de newsletter segue para o tratamento de mensagem em texto. Mantém os ajustes locais de lista e botão.
 
 ## Implantação
 
@@ -83,3 +85,4 @@ git merge upstream/main     # resolver conflitos mantendo os itens 1 a 4 acima
 | 28/10/2026 | `fd3b9cf` | Rota `POST /user/lid-to-pn`; `VERSION` 0.7.2-komand4 (implantada e testada) |
 | 28/10/2026 | `51f30be` | Botões de resposta como `InteractiveMessage` + `<biz>` completo; `VERSION` 0.7.2-komand5 (implantada e testada) |
 | 29/10/2026 | (este PR) | Um container/pool compartilhado do whatsmeow (fim do vazamento de conexões); instância nunca pareada não reinicia sozinha; `VERSION` 0.7.2-komand6 (build e testes só no Easypanel) |
+| 06/11/2026 | em preparação | Backport do ACK de `<status>` da whatsmeow; `VERSION` 0.7.2-komand7. Build e teste real pendentes. |
